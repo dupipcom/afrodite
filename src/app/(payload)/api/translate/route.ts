@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     const token = cookies['payload-token']
 
     // Verify user is authenticated
-    let user = null
+    const user = null
     if (token) {
       try {
         const userResponse = await payload.auth.find({
