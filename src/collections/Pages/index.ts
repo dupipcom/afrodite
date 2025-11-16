@@ -102,7 +102,7 @@ export const Pages: CollectionConfig<'pages'> = {
                 },
               }),
               label: false,
-              required: true,
+              required: false,
             },
           ],
           label: 'Content',
