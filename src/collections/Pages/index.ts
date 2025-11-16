@@ -1,4 +1,5 @@
 import type { CollectionConfig } from 'payload'
+import { PayloadAiPluginLexicalEditorFeature } from '@ai-stack/payloadcms'
 
 import {
   FixedToolbarFeature,
@@ -74,18 +75,30 @@ export const Pages: CollectionConfig<'pages'> = {
       type: 'tabs',
       tabs: [
         {
-          name: 'hero',
-          fields: [hero],
-          label: 'Hero',
-          localized: true,
+          fields: [
+            {
+              name: 'headerTitle',
+              type: 'richText',
+              localized: true,
+              editor: lexicalEditor({
+                features: ({ rootFeatures }) => {
+                  return [
+                    ...rootFeatures,
+                    HeadingFeature({ enabledHeadingSizes: ['h1', 'h2', 'h3', 'h4'] }),
+                    FixedToolbarFeature(),
+                    InlineToolbarFeature(),
+                    HorizontalRuleFeature(),
+                    PayloadAiPluginLexicalEditorFeature(),
+                  ]
+                },
+              }),
+              label: 'Header title',
+            },
+          ],
+          label: 'Header',
         },
         {
           fields: [
-            {
-                name: 'layout',
-                type: 'blocks',
-                blocks: [CallToAction, Content, MediaBlock, Archive, FormBlock],
-            },
             {
               name: 'content',
               type: 'richText',
@@ -98,11 +111,17 @@ export const Pages: CollectionConfig<'pages'> = {
                     FixedToolbarFeature(),
                     InlineToolbarFeature(),
                     HorizontalRuleFeature(),
+                    PayloadAiPluginLexicalEditorFeature(),
                   ]
                 },
               }),
-              label: false,
+              label: 'Page content',
               required: false,
+            },
+            {
+              name: 'layout',
+              type: 'blocks',
+              blocks: [CallToAction, Content, MediaBlock, Archive, FormBlock],
             },
           ],
           label: 'Content',

@@ -57,6 +57,7 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@ai-stack/payloadcms": "^3.2.22-beta",
     "@eslint/eslintrc": "^3.2.0",
     "@playwright/test": "1.56.1",
     "@tailwindcss/typography": "^0.5.13",

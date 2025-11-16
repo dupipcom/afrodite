@@ -1,5 +1,6 @@
 import type { CollectionConfig } from 'payload'
 
+import { PayloadAiPluginLexicalEditorFeature } from '@ai-stack/payloadcms'
 import {
   BlocksFeature,
   FixedToolbarFeature,
@@ -93,6 +94,7 @@ export const Posts: CollectionConfig<'posts'> = {
                     FixedToolbarFeature(),
                     InlineToolbarFeature(),
                     HorizontalRuleFeature(),
+                    PayloadAiPluginLexicalEditorFeature(),
                   ]
                 },
               }),

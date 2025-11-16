@@ -1,5 +1,7 @@
 import { vercelBlobStorage } from '@payloadcms/storage-vercel-blob'
 import { mongooseAdapter } from '@payloadcms/db-mongodb'
+import { payloadAiPlugin } from '@ai-stack/payloadcms'
+
 
 import sharp from 'sharp' // sharp-import
 import path from 'path'
@@ -78,6 +80,13 @@ export default buildConfig({
         media: true,
       },
       token: process.env.BLOB_READ_WRITE_TOKEN,
+    }),
+    payloadAiPlugin({
+      collections: {
+        [Posts.slug]: true,
+        [Pages.slug]: true,
+      },
+      debugging: false,
     }),
   ],
   secret: process.env.PAYLOAD_SECRET,
