@@ -29,7 +29,6 @@ import { slugField } from 'payload'
 
 export const Posts: CollectionConfig<'posts'> = {
   slug: 'posts',
-  localization: true,
   access: {
     create: authenticated,
     delete: authenticated,
