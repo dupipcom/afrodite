@@ -67,6 +67,16 @@ export const Pages: CollectionConfig<'pages'> = {
   },
   fields: [
     {
+      name: 'translateButton',
+      type: 'ui',
+      admin: {
+        components: {
+          Field: '@/components/TranslateButton#TranslateButton',
+        },
+        position: 'sidebar',
+      },
+    },
+    {
       name: 'title',
       type: 'text',
       required: true,
