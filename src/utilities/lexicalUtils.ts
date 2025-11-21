@@ -177,7 +177,28 @@ export async function translateLexicalState(
   }
 
   /**
+   * Translate text within a single node tree
+   */
+  async function translateNodeText(node: any): Promise<void> {
+    if (node.type === 'text' && node.text && typeof node.text === 'string' && node.text.trim()) {
+      try {
+        const translatedText = await translateFn(node.text, sourceLocale, targetLocale)
+        node.text = translatedText
+      } catch (error) {
+        console.error('Failed to translate text node:', error)
+      }
+    }
+
+    if (node.children && Array.isArray(node.children)) {
+      for (const child of node.children) {
+        await translateNodeText(child)
+      }
+    }
+  }
+
+  /**
    * Translate a chunk of paragraph nodes by batching their text
+   * Uses numbered markers and retry logic to handle split mismatches
    */
   async function translateParagraphChunk(nodes: any[]): Promise<void> {
     // Collect all text nodes from this chunk
@@ -206,55 +227,122 @@ export async function translateLexicalState(
       return
     }
 
-    // Combine all text with a separator that's unlikely to appear in content
-    const separator = ' |||TRANSLATE_SEPARATOR||| '
-    const combinedText = allTextNodes.map((tn) => tn.text).join(separator)
+    // Try batch translation with retry logic
+    let retryCount = 0
+    const maxRetries = 2
+    let success = false
 
-    try {
-      // Translate the combined text
-      const translatedCombined = await translateFn(combinedText, sourceLocale, targetLocale)
+    while (retryCount <= maxRetries && !success) {
+      try {
+        // Use numbered markers that are more explicit and less likely to be modified
+        const markerPrefix = `[SEGMENT_${retryCount}_`
+        const markerSuffix = `_END]`
+        
+        // Build combined text with numbered markers
+        const segments: string[] = []
+        allTextNodes.forEach((tn, index) => {
+          segments.push(`${markerPrefix}${index}${markerSuffix}${tn.text}${markerPrefix}${index}${markerSuffix}`)
+        })
+        
+        const combinedText = segments.join('\n\n')
+        
+        // Add instruction to preserve markers in the translation
+        // We'll need to modify the translateFn to accept instructions, but for now
+        // we'll use a more robust marker system
+        const translatedCombined = await translateFn(combinedText, sourceLocale, targetLocale)
 
-      // Split back by the separator
-      const translatedParts = translatedCombined.split(separator)
-
-      // Map translated parts back to text nodes
-      // If the number of parts matches, use them directly
-      // Otherwise, try to distribute proportionally
-      if (translatedParts.length === allTextNodes.length) {
-        for (let i = 0; i < allTextNodes.length; i++) {
-          allTextNodes[i].node.text = translatedParts[i].trim()
-        }
-      } else {
-        // If splitting didn't work perfectly, fall back to individual translation
-        console.warn(
-          `Translation split mismatch: expected ${allTextNodes.length} parts, got ${translatedParts.length}. Falling back to individual translation.`,
+        // Extract segments using regex to find markers
+        const segmentPattern = new RegExp(
+          `\\[SEGMENT_${retryCount}_(\\d+)_END\\]([\\s\\S]*?)\\[SEGMENT_${retryCount}_\\1_END\\]`,
+          'g',
         )
-        for (const textNode of allTextNodes) {
-          try {
-            const translatedText = await translateFn(
-              textNode.text,
-              sourceLocale,
-              targetLocale,
-            )
-            textNode.node.text = translatedText
-          } catch (error) {
-            console.error('Failed to translate text node:', error)
+        
+        const extractedSegments: Map<number, string> = new Map()
+        let match
+        while ((match = segmentPattern.exec(translatedCombined)) !== null) {
+          const segmentIndex = parseInt(match[1], 10)
+          const segmentText = match[2].trim()
+          if (!extractedSegments.has(segmentIndex)) {
+            extractedSegments.set(segmentIndex, segmentText)
           }
         }
-      }
-    } catch (error) {
-      // If batch translation fails, fall back to individual translation
-      console.error('Batch translation failed, falling back to individual:', error)
-      for (const textNode of allTextNodes) {
-        try {
-          const translatedText = await translateFn(
-            textNode.text,
-            sourceLocale,
-            targetLocale,
+
+        // Check if we got all segments
+        if (extractedSegments.size === allTextNodes.length) {
+          // Success! Map translated segments back to text nodes
+          for (let i = 0; i < allTextNodes.length; i++) {
+            const translatedText = extractedSegments.get(i)
+            if (translatedText !== undefined) {
+              allTextNodes[i].node.text = translatedText
+            } else {
+              // If a segment is missing, fall back to individual translation for that node
+              console.warn(`Segment ${i} missing in translation, translating individually`)
+              const translatedText = await translateFn(
+                allTextNodes[i].text,
+                sourceLocale,
+                targetLocale,
+              )
+              allTextNodes[i].node.text = translatedText
+            }
+          }
+          success = true
+        } else {
+          // Mismatch - try a different approach or retry
+          if (retryCount < maxRetries) {
+            console.warn(
+              `Translation split mismatch: expected ${allTextNodes.length} segments, got ${extractedSegments.size}. Retrying with different markers (attempt ${retryCount + 1}/${maxRetries})...`,
+            )
+            retryCount++
+            // Add a small delay before retry
+            await new Promise((resolve) => setTimeout(resolve, 200))
+          } else {
+            // Final fallback: individual translation
+            console.warn(
+              `Translation split mismatch after ${maxRetries} retries. Falling back to individual translation.`,
+            )
+            for (const textNode of allTextNodes) {
+              try {
+                const translatedText = await translateFn(
+                  textNode.text,
+                  sourceLocale,
+                  targetLocale,
+                )
+                textNode.node.text = translatedText
+                // Add a small delay between individual translations
+                await new Promise((resolve) => setTimeout(resolve, 50))
+              } catch (error) {
+                console.error('Failed to translate text node:', error)
+              }
+            }
+            success = true // Mark as done even if some failed
+          }
+        }
+      } catch (error) {
+        // If batch translation fails, retry or fall back
+        if (retryCount < maxRetries) {
+          console.warn(
+            `Batch translation failed, retrying (attempt ${retryCount + 1}/${maxRetries})...`,
+            error,
           )
-          textNode.node.text = translatedText
-        } catch (error) {
-          console.error('Failed to translate text node:', error)
+          retryCount++
+          await new Promise((resolve) => setTimeout(resolve, 200))
+        } else {
+          // Final fallback: individual translation
+          console.error('Batch translation failed after retries, falling back to individual:', error)
+          for (const textNode of allTextNodes) {
+            try {
+              const translatedText = await translateFn(
+                textNode.text,
+                sourceLocale,
+                targetLocale,
+              )
+              textNode.node.text = translatedText
+              await new Promise((resolve) => setTimeout(resolve, 50))
+            } catch (error) {
+              console.error('Failed to translate text node:', error)
+            }
+          }
+          success = true
         }
       }
     }
