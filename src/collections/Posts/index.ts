@@ -80,6 +80,7 @@ export const Posts: CollectionConfig<'posts'> = {
     {
       name: 'title',
       type: 'text',
+      localized: true,
       required: true,
     },
     {
