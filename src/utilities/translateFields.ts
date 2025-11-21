@@ -445,8 +445,11 @@ export async function translateDocument(
     throw new Error('No target locales to translate to')
   }
 
+  console.log(`translateDocument: Processing ${localesToTranslate.length} locale(s): ${localesToTranslate.join(', ')}`)
+
   // Step 5: Process each locale sequentially - translate and commit before moving to next
   for (const locale of localesToTranslate) {
+    console.log(`translateDocument: Starting translation for locale: ${locale}`)
     const translations: Record<string, any> = {}
 
     // Translate all fields for this locale
@@ -473,6 +476,8 @@ export async function translateDocument(
 
     // Step 6: Commit translations for this locale to the database before moving to next
     if (Object.keys(translations).length === 0) {
+      console.log(`No translations to save for locale ${locale} (all fields may be empty)`)
+      console.log(`translateDocument: Completed translation for locale: ${locale} (no changes)`)
       continue
     }
 
@@ -503,10 +508,13 @@ export async function translateDocument(
       })
 
       console.log(`Successfully translated and saved locale: ${locale}`)
+      console.log(`translateDocument: Completed translation for locale: ${locale}`)
     } catch (error) {
-      // Log error but continue with other locales
+      // Log error and throw to stop processing
       console.error(`Failed to save translations for locale ${locale}:`, error)
       throw error
     }
   }
+  
+  console.log(`translateDocument: Finished processing all ${localesToTranslate.length} locale(s)`)
 }

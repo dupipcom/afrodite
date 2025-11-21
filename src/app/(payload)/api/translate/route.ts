@@ -67,10 +67,15 @@ export async function POST(request: Request) {
       headers: request.headers,
     } as PayloadRequest
 
-    // Translate the document
+    // Translate the document - should only process the locales in targetLocales array
+    console.log(`Starting translation for locales: ${targetLocales.join(', ')}`)
     await translateDocument(req, collectionConfig, documentId, 'en', targetLocales)
+    console.log(`Completed translation for locales: ${targetLocales.join(', ')}`)
 
-    return Response.json({ success: true })
+    return Response.json({ 
+      success: true,
+      translatedLocales: targetLocales,
+    })
   } catch (error) {
     console.error('Translation error:', error)
     return Response.json(
