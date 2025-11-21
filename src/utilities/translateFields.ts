@@ -354,35 +354,31 @@ export async function translateDocument(
   // Step 4: Get all target locales (excluding source)
   const targetLocales = locales.map((loc) => loc.code).filter((code) => code !== sourceLocale)
 
-  // Step 5: Translate each field for each target locale
-  const translationsByLocale: Record<string, Record<string, any>> = {}
-
+  // Step 5: Process each locale sequentially - translate and commit before moving to next
   for (const locale of targetLocales) {
-    translationsByLocale[locale] = {}
-  }
+    const translations: Record<string, any> = {}
 
-  for (const field of fieldsWithValues) {
-    // Extract text from the field value
-    const sourceText = extractTextFromField(field)
+    // Translate all fields for this locale
+    for (const field of fieldsWithValues) {
+      // Extract text from the field value
+      const sourceText = extractTextFromField(field)
 
-    if (!sourceText || !sourceText.trim()) {
-      continue
-    }
+      if (!sourceText || !sourceText.trim()) {
+        continue
+      }
 
-    // Translate for each target locale
-    for (const locale of targetLocales) {
+      // Translate for this locale
       try {
         const translatedText = await translateText(sourceText, sourceLocale, locale)
         const translatedValue = convertTextToFieldFormat(translatedText, field.type)
-        translationsByLocale[locale][field.path] = translatedValue
+        translations[field.path] = translatedValue
       } catch (error) {
-        // Continue with other translations
+        // Continue with other fields even if one fails
+        console.error(`Failed to translate field ${field.path} for locale ${locale}:`, error)
       }
     }
-  }
 
-  // Step 6: Update the document for each locale
-  for (const [locale, translations] of Object.entries(translationsByLocale)) {
+    // Step 6: Commit translations for this locale to the database before moving to next
     if (Object.keys(translations).length === 0) {
       continue
     }
@@ -405,14 +401,18 @@ export async function translateDocument(
       // Merge translations into the document
       const updatedData = mergeTranslatedValues(currentDoc, translations)
 
-      // Update the document
+      // Update the document for this locale
       await req.payload.update({
         collection: collectionConfig.slug as any,
         id: documentId,
         locale: locale as any,
         data: updatedData,
       })
+
+      console.log(`Successfully translated and saved locale: ${locale}`)
     } catch (error) {
+      // Log error but continue with other locales
+      console.error(`Failed to save translations for locale ${locale}:`, error)
       throw error
     }
   }
