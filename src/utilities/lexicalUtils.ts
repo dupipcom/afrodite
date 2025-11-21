@@ -76,44 +76,21 @@ export function textToLexicalState(text: string): SerializedEditorState {
 }
 
 /**
- * Extract text from a node and its children
+ * Check if a node has any text content (non-empty text nodes)
  */
-function extractTextFromNode(node: any): string {
-  let text = ''
-  if (node.type === 'text' && node.text && typeof node.text === 'string') {
-    text += node.text
+function hasTextContent(node: any): boolean {
+  if (node.type === 'text' && node.text && typeof node.text === 'string' && node.text.trim()) {
+    return true
   }
   if (node.children && Array.isArray(node.children)) {
-    for (const child of node.children) {
-      text += extractTextFromNode(child)
-    }
+    return node.children.some((child: any) => hasTextContent(child))
   }
-  return text
+  return false
 }
-
-  /**
-   * Check if a node is a paragraph-like node (paragraph, heading, listitem)
-   */
-  function isParagraphLikeNode(node: any): boolean {
-    return node.type === 'paragraph' || node.type === 'heading' || node.type === 'listitem'
-  }
-
-  /**
-   * Check if a node has any text content (non-empty text nodes)
-   */
-  function hasTextContent(node: any): boolean {
-    if (node.type === 'text' && node.text && typeof node.text === 'string' && node.text.trim()) {
-      return true
-    }
-    if (node.children && Array.isArray(node.children)) {
-      return node.children.some((child: any) => hasTextContent(child))
-    }
-    return false
-  }
 
 /**
  * Translate Lexical editor state while preserving all structure, formatting, and blocks
- * This function processes text in chunks of 3 paragraphs to avoid API rate limits
+ * Translates entire content at once without chunking
  */
 export async function translateLexicalState(
   editorState: SerializedEditorState | null | undefined,
@@ -144,56 +121,6 @@ export async function translateLexicalState(
   }
 
   /**
-   * Collect all paragraph-like nodes (paragraphs, headings, list items) from root children
-   * Skips empty nodes that have no text content
-   */
-  function collectParagraphNodes(children: any[]): any[] {
-    const paragraphNodes: any[] = []
-    for (const child of children) {
-      // If it's a paragraph-like node, only add if it has text content
-      if (isParagraphLikeNode(child)) {
-        if (hasTextContent(child)) {
-          paragraphNodes.push(child)
-        }
-      } else if (child.type === 'list' && child.children) {
-        // For lists, collect list items that have text content
-        for (const listItem of child.children) {
-          if (listItem.type === 'listitem' && hasTextContent(listItem)) {
-            paragraphNodes.push(listItem)
-          }
-        }
-      } else if (child.type === 'block') {
-        // For blocks, only add if they have text content
-        if (hasTextContent(child)) {
-          paragraphNodes.push(child)
-        }
-      }
-    }
-    return paragraphNodes
-  }
-
-  /**
-   * Collect all text nodes from a node tree
-   */
-  function collectTextNodes(node: any): Array<{ node: any; text: string }> {
-    const textNodes: Array<{ node: any; text: string }> = []
-    
-    function traverse(n: any): void {
-      if (n.type === 'text' && n.text && typeof n.text === 'string' && n.text.trim()) {
-        textNodes.push({ node: n, text: n.text })
-      }
-      if (n.children && Array.isArray(n.children)) {
-        for (const child of n.children) {
-          traverse(child)
-        }
-      }
-    }
-    
-    traverse(node)
-    return textNodes
-  }
-
-  /**
    * Translate text within a single node tree
    * Skips empty text nodes
    */
@@ -221,96 +148,17 @@ export async function translateLexicalState(
     }
   }
 
-  /**
-   * Translate a chunk of paragraph nodes
-   * Translates text nodes individually to avoid marker issues, but processes them in chunks
-   * to reduce API calls compared to translating everything at once
-   * Skips empty text blocks
-   */
-  async function translateParagraphChunk(nodes: any[]): Promise<void> {
-    // Collect all text nodes from this chunk, filtering out empty ones
-    const allTextNodes: Array<{ node: any; text: string }> = []
-    for (const node of nodes) {
-      // Skip nodes that have no text content
-      if (!hasTextContent(node)) {
-        continue
-      }
-      const textNodes = collectTextNodes(node)
-      // Filter out any empty text nodes (shouldn't happen due to collectTextNodes check, but be safe)
-      const nonEmptyTextNodes = textNodes.filter((tn) => tn.text && tn.text.trim())
-      allTextNodes.push(...nonEmptyTextNodes)
-    }
-
-    if (allTextNodes.length === 0) {
-      return
-    }
-
-    // Translate each text node individually
-    // This avoids marker issues while still processing in chunks of 3 paragraphs
-    for (const textNode of allTextNodes) {
-      // Double-check that text is not empty before translating
-      const trimmedText = textNode.text.trim()
-      if (!trimmedText) {
-        continue
-      }
-      
-      try {
-        const translatedText = await translateFn(
-          trimmedText,
-          sourceLocale,
-          targetLocale,
-        )
-        textNode.node.text = translatedText
-        // Add a small delay between translations to avoid rate limiting
-        if (allTextNodes.length > 1) {
-          await new Promise((resolve) => setTimeout(resolve, 50))
-        }
-      } catch (error) {
-        console.error('Failed to translate text node:', error)
-        // Continue with other text nodes even if one fails
-      }
-    }
-  }
-
   // Get root children
   const rootChildren = translatedState.root.children || []
   
-  // Collect paragraph-like nodes
-  const paragraphNodes = collectParagraphNodes(rootChildren)
-  
-  // If we have 3 or fewer paragraph nodes, translate them all at once
-  if (paragraphNodes.length <= 3) {
-    for (const node of paragraphNodes) {
-      await translateNodeText(node)
-    }
-  } else {
-    // Chunk paragraph nodes into groups of 3
-    const chunkSize = 3
-    for (let i = 0; i < paragraphNodes.length; i += chunkSize) {
-      const chunk = paragraphNodes.slice(i, i + chunkSize)
-      await translateParagraphChunk(chunk)
-      
-      // Add a small delay between chunks to avoid rate limiting
-      if (i + chunkSize < paragraphNodes.length) {
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      }
-    }
-  }
-
-  // Also translate any remaining nodes that aren't paragraph-like
-  // Skip empty nodes
+  // Translate all nodes - process entire content at once
   for (const child of rootChildren) {
     // Skip if node has no text content
     if (!hasTextContent(child)) {
       continue
     }
     
-    if (!isParagraphLikeNode(child) && child.type !== 'list' && child.type !== 'block') {
-      await translateNodeText(child)
-    } else if (child.type === 'block') {
-      // Translate blocks individually (they may contain their own paragraphs)
-      await translateNodeText(child)
-    }
+    await translateNodeText(child)
   }
 
   return translatedState
