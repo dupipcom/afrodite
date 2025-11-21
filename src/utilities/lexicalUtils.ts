@@ -76,9 +76,31 @@ export function textToLexicalState(text: string): SerializedEditorState {
 }
 
 /**
+ * Extract text from a node and its children
+ */
+function extractTextFromNode(node: any): string {
+  let text = ''
+  if (node.type === 'text' && node.text && typeof node.text === 'string') {
+    text += node.text
+  }
+  if (node.children && Array.isArray(node.children)) {
+    for (const child of node.children) {
+      text += extractTextFromNode(child)
+    }
+  }
+  return text
+}
+
+/**
+ * Check if a node is a paragraph-like node (paragraph, heading, listitem)
+ */
+function isParagraphLikeNode(node: any): boolean {
+  return node.type === 'paragraph' || node.type === 'heading' || node.type === 'listitem'
+}
+
+/**
  * Translate Lexical editor state while preserving all structure, formatting, and blocks
- * This function recursively traverses the state, translating only text nodes
- * while preserving all other nodes (blocks, headings, paragraphs, formatting, etc.) exactly as they are
+ * This function processes text in chunks of 3 paragraphs to avoid API rate limits
  */
 export async function translateLexicalState(
   editorState: SerializedEditorState | null | undefined,
@@ -91,7 +113,6 @@ export async function translateLexicalState(
   }
 
   // Deep clone the entire structure to avoid mutating the original
-  // This preserves ALL properties of the editorState, not just root
   const translatedState = JSON.parse(JSON.stringify(editorState))
   
   // Log structure for debugging (can be removed in production)
@@ -110,53 +131,170 @@ export async function translateLexicalState(
   }
 
   /**
-   * Recursively traverse and translate text nodes
-   * Preserves all non-text nodes (blocks, headings, paragraphs, formatting, etc.)
-   * 
-   * Node types that are preserved as-is:
-   * - 'heading' (with tag: 'h1', 'h2', 'h3', 'h4')
-   * - 'paragraph'
-   * - 'block' (embedded blocks like mediaBlock, banner, code, cta)
-   * - 'link'
-   * - 'list' and 'listitem'
-   * - 'horizontalrule'
-   * - Any other non-text node type
+   * Collect all paragraph-like nodes (paragraphs, headings, list items) from root children
    */
-  async function translateNode(node: any): Promise<void> {
-    // Only translate actual text nodes with text content
-    // All other node types are preserved completely, including:
-    // - Headings (type: 'heading' with tag: 'h1'/'h2'/'h3'/'h4')
-    // - Blocks (type: 'block' with fields and blockType)
-    // - Paragraphs, links, lists, etc.
-    if (node.type === 'text' && node.text && typeof node.text === 'string' && node.text.trim()) {
-      try {
-        const translatedText = await translateFn(node.text, sourceLocale, targetLocale)
-        node.text = translatedText
-      } catch (error) {
-        // If translation fails, keep original text
-        console.error('Failed to translate text node:', error)
+  function collectParagraphNodes(children: any[]): any[] {
+    const paragraphNodes: any[] = []
+    for (const child of children) {
+      // If it's a paragraph-like node, add it
+      if (isParagraphLikeNode(child)) {
+        paragraphNodes.push(child)
+      } else if (child.type === 'list' && child.children) {
+        // For lists, collect list items
+        for (const listItem of child.children) {
+          if (listItem.type === 'listitem') {
+            paragraphNodes.push(listItem)
+          }
+        }
+      } else if (child.type === 'block') {
+        // For blocks, we'll translate them separately (they might contain paragraphs)
+        // For now, we'll process them individually
+        paragraphNodes.push(child)
       }
     }
-
-    // Recursively process children (for all node types)
-    // This ensures we translate text within headings, paragraphs, links, blocks, etc.
-    if (node.children && Array.isArray(node.children)) {
-      for (const child of node.children) {
-        await translateNode(child)
-      }
-    }
-
-    // Note: Block nodes may have a 'fields' property that contains block data
-    // These fields are preserved as-is since we only translate text nodes
-    // The entire block structure (including blockType, fields, etc.) remains unchanged
+    return paragraphNodes
   }
 
-  // Translate the root node and all its children
-  await translateNode(translatedState.root)
+  /**
+   * Collect all text nodes from a node tree
+   */
+  function collectTextNodes(node: any): Array<{ node: any; text: string }> {
+    const textNodes: Array<{ node: any; text: string }> = []
+    
+    function traverse(n: any): void {
+      if (n.type === 'text' && n.text && typeof n.text === 'string' && n.text.trim()) {
+        textNodes.push({ node: n, text: n.text })
+      }
+      if (n.children && Array.isArray(n.children)) {
+        for (const child of n.children) {
+          traverse(child)
+        }
+      }
+    }
+    
+    traverse(node)
+    return textNodes
+  }
 
-  // Return the complete translated state with all properties preserved
-  // This includes the root node with all its children (headings, paragraphs, blocks, etc.)
-  // and any other top-level properties that might exist on the editorState
+  /**
+   * Translate a chunk of paragraph nodes by batching their text
+   */
+  async function translateParagraphChunk(nodes: any[]): Promise<void> {
+    // Collect all text nodes from this chunk
+    const allTextNodes: Array<{ node: any; text: string }> = []
+    for (const node of nodes) {
+      const textNodes = collectTextNodes(node)
+      allTextNodes.push(...textNodes)
+    }
+
+    if (allTextNodes.length === 0) {
+      return
+    }
+
+    // If only one text node, translate it directly
+    if (allTextNodes.length === 1) {
+      try {
+        const translatedText = await translateFn(
+          allTextNodes[0].text,
+          sourceLocale,
+          targetLocale,
+        )
+        allTextNodes[0].node.text = translatedText
+      } catch (error) {
+        console.error('Failed to translate text node:', error)
+      }
+      return
+    }
+
+    // Combine all text with a separator that's unlikely to appear in content
+    const separator = ' |||TRANSLATE_SEPARATOR||| '
+    const combinedText = allTextNodes.map((tn) => tn.text).join(separator)
+
+    try {
+      // Translate the combined text
+      const translatedCombined = await translateFn(combinedText, sourceLocale, targetLocale)
+
+      // Split back by the separator
+      const translatedParts = translatedCombined.split(separator)
+
+      // Map translated parts back to text nodes
+      // If the number of parts matches, use them directly
+      // Otherwise, try to distribute proportionally
+      if (translatedParts.length === allTextNodes.length) {
+        for (let i = 0; i < allTextNodes.length; i++) {
+          allTextNodes[i].node.text = translatedParts[i].trim()
+        }
+      } else {
+        // If splitting didn't work perfectly, fall back to individual translation
+        console.warn(
+          `Translation split mismatch: expected ${allTextNodes.length} parts, got ${translatedParts.length}. Falling back to individual translation.`,
+        )
+        for (const textNode of allTextNodes) {
+          try {
+            const translatedText = await translateFn(
+              textNode.text,
+              sourceLocale,
+              targetLocale,
+            )
+            textNode.node.text = translatedText
+          } catch (error) {
+            console.error('Failed to translate text node:', error)
+          }
+        }
+      }
+    } catch (error) {
+      // If batch translation fails, fall back to individual translation
+      console.error('Batch translation failed, falling back to individual:', error)
+      for (const textNode of allTextNodes) {
+        try {
+          const translatedText = await translateFn(
+            textNode.text,
+            sourceLocale,
+            targetLocale,
+          )
+          textNode.node.text = translatedText
+        } catch (error) {
+          console.error('Failed to translate text node:', error)
+        }
+      }
+    }
+  }
+
+  // Get root children
+  const rootChildren = translatedState.root.children || []
+  
+  // Collect paragraph-like nodes
+  const paragraphNodes = collectParagraphNodes(rootChildren)
+  
+  // If we have 3 or fewer paragraph nodes, translate them all at once
+  if (paragraphNodes.length <= 3) {
+    for (const node of paragraphNodes) {
+      await translateNodeText(node)
+    }
+  } else {
+    // Chunk paragraph nodes into groups of 3
+    const chunkSize = 3
+    for (let i = 0; i < paragraphNodes.length; i += chunkSize) {
+      const chunk = paragraphNodes.slice(i, i + chunkSize)
+      await translateParagraphChunk(chunk)
+      
+      // Add a small delay between chunks to avoid rate limiting
+      if (i + chunkSize < paragraphNodes.length) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
+  }
+
+  // Also translate any remaining nodes that aren't paragraph-like
+  for (const child of rootChildren) {
+    if (!isParagraphLikeNode(child) && child.type !== 'list' && child.type !== 'block') {
+      await translateNodeText(child)
+    } else if (child.type === 'block') {
+      // Translate blocks individually (they may contain their own paragraphs)
+      await translateNodeText(child)
+    }
+  }
+
   return translatedState
 }
 

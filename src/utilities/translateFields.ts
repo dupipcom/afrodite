@@ -172,9 +172,33 @@ function extractFieldValues(
 }
 
 /**
- * Translate text using OpenAI
+ * Split text into paragraphs
  */
-async function translateText(
+function splitIntoParagraphs(text: string): string[] {
+  // Split by double newlines (paragraph breaks) or single newline if no double newlines exist
+  const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim())
+  if (paragraphs.length === 0) {
+    // If no paragraph breaks, treat entire text as one paragraph
+    return [text.trim()].filter((p) => p)
+  }
+  return paragraphs.map((p) => p.trim()).filter((p) => p)
+}
+
+/**
+ * Chunk paragraphs into groups of specified size
+ */
+function chunkParagraphs(paragraphs: string[], chunkSize: number): string[][] {
+  const chunks: string[][] = []
+  for (let i = 0; i < paragraphs.length; i += chunkSize) {
+    chunks.push(paragraphs.slice(i, i + chunkSize))
+  }
+  return chunks
+}
+
+/**
+ * Translate a single chunk of text using OpenAI
+ */
+async function translateTextChunk(
   text: string,
   sourceLocale: string,
   targetLocale: string,
@@ -244,6 +268,50 @@ async function translateText(
       `Failed to translate text: ${error instanceof Error ? error.message : 'Unknown error'}`,
     )
   }
+}
+
+/**
+ * Translate text using OpenAI, processing in chunks of 3 paragraphs
+ */
+async function translateText(
+  text: string,
+  sourceLocale: string,
+  targetLocale: string,
+): Promise<string> {
+  if (!text || !text.trim()) {
+    return text
+  }
+
+  // Split text into paragraphs
+  const paragraphs = splitIntoParagraphs(text)
+  
+  if (paragraphs.length === 0) {
+    return text
+  }
+
+  // If text is short (3 paragraphs or less), translate as-is
+  if (paragraphs.length <= 3) {
+    return await translateTextChunk(text, sourceLocale, targetLocale)
+  }
+
+  // Chunk paragraphs into groups of 3
+  const chunks = chunkParagraphs(paragraphs, 3)
+  const translatedChunks: string[] = []
+
+  // Translate each chunk sequentially
+  for (const chunk of chunks) {
+    const chunkText = chunk.join('\n\n')
+    const translatedChunk = await translateTextChunk(chunkText, sourceLocale, targetLocale)
+    translatedChunks.push(translatedChunk)
+    
+    // Add a small delay between chunks to avoid rate limiting
+    if (chunks.length > 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+
+  // Join translated chunks back together
+  return translatedChunks.join('\n\n')
 }
 
 /**
