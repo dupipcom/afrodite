@@ -488,6 +488,7 @@ export interface Category {
 export interface User {
   id: string;
   name?: string | null;
+  dupipUser?: string | null;
   updatedAt: string;
   createdAt: string;
   email: string;
@@ -1417,6 +1418,7 @@ export interface CategoriesSelect<T extends boolean = true> {
  */
 export interface UsersSelect<T extends boolean = true> {
   name?: T;
+  dupipUser?: T;
   updatedAt?: T;
   createdAt?: T;
   email?: T;

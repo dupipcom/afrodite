@@ -21,6 +21,10 @@ export const Users: CollectionConfig = {
       name: 'name',
       type: 'text',
     },
+    {
+      name: 'dupipUser',
+      type: 'text',
+    },
   ],
   timestamps: true,
 }
