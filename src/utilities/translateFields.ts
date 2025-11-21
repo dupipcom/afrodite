@@ -5,7 +5,7 @@
 import type { PayloadRequest } from 'payload'
 import type { CollectionConfig } from 'payload'
 import OpenAI from 'openai'
-import { extractTextFromLexical, textToLexicalState } from './lexicalUtils'
+import { extractTextFromLexical, textToLexicalState, translateLexicalState } from './lexicalUtils'
 import { locales } from '@/i18n/locales'
 
 // OPENAI_API_KEY must be set in environment variables
@@ -248,6 +248,7 @@ async function translateText(
 
 /**
  * Extract plain text from field value based on field type
+ * (Used for non-richText fields or when we need plain text)
  */
 function extractTextFromField(field: LocalizedFieldWithValue): string {
   if (field.type === 'richText') {
@@ -259,13 +260,28 @@ function extractTextFromField(field: LocalizedFieldWithValue): string {
 }
 
 /**
- * Convert translated text back to field format
+ * Translate a field value while preserving structure
+ * For richText fields, this preserves all formatting, blocks, and structure
+ * For other fields, it translates the plain text
  */
-function convertTextToFieldFormat(text: string, fieldType: string): any {
-  if (fieldType === 'richText') {
-    return textToLexicalState(text)
+async function translateFieldValue(
+  field: LocalizedFieldWithValue,
+  translateFn: (text: string, sourceLocale: string, targetLocale: string) => Promise<string>,
+  sourceLocale: string,
+  targetLocale: string,
+): Promise<any> {
+  if (field.type === 'richText') {
+    // Use structure-preserving translation for richText
+    return await translateLexicalState(field.value, translateFn, sourceLocale, targetLocale)
+  } else if (field.type === 'text' || field.type === 'textarea') {
+    // For plain text fields, translate directly
+    const text = field.value || ''
+    if (!text || !text.trim()) {
+      return text
+    }
+    return await translateFn(text, sourceLocale, targetLocale)
   }
-  return text
+  return field.value
 }
 
 /**
@@ -360,17 +376,19 @@ export async function translateDocument(
 
     // Translate all fields for this locale
     for (const field of fieldsWithValues) {
-      // Extract text from the field value
-      const sourceText = extractTextFromField(field)
-
-      if (!sourceText || !sourceText.trim()) {
+      // Skip empty fields
+      if (isEmptyValue(field.value)) {
         continue
       }
 
-      // Translate for this locale
+      // Translate the field value while preserving structure
       try {
-        const translatedText = await translateText(sourceText, sourceLocale, locale)
-        const translatedValue = convertTextToFieldFormat(translatedText, field.type)
+        const translatedValue = await translateFieldValue(
+          field,
+          translateText,
+          sourceLocale,
+          locale,
+        )
         translations[field.path] = translatedValue
       } catch (error) {
         // Continue with other fields even if one fails
