@@ -340,6 +340,7 @@ export async function translateDocument(
   collectionConfig: CollectionConfig,
   documentId: string,
   sourceLocale: string = 'en',
+  targetLocales?: string[],
 ): Promise<void> {
   // Step 1: Identify all localized field definitions from the collection config
   const fieldDefinitions = getLocalizedFieldDefinitions(collectionConfig.fields || [])
@@ -367,11 +368,17 @@ export async function translateDocument(
     throw new Error('No localized fields with values found in the document')
   }
 
-  // Step 4: Get all target locales (excluding source)
-  const targetLocales = locales.map((loc) => loc.code).filter((code) => code !== sourceLocale)
+  // Step 4: Get target locales (use provided list or default to all locales excluding source)
+  const localesToTranslate = targetLocales
+    ? targetLocales.filter((code) => code !== sourceLocale)
+    : locales.map((loc) => loc.code).filter((code) => code !== sourceLocale)
+
+  if (localesToTranslate.length === 0) {
+    throw new Error('No target locales to translate to')
+  }
 
   // Step 5: Process each locale sequentially - translate and commit before moving to next
-  for (const locale of targetLocales) {
+  for (const locale of localesToTranslate) {
     const translations: Record<string, any> = {}
 
     // Translate all fields for this locale

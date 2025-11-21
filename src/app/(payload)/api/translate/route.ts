@@ -7,11 +7,18 @@ export async function POST(request: Request) {
   try {
     const payload = await getPayload({ config })
     const body = await request.json()
-    const { collectionSlug, documentId } = body
+    const { collectionSlug, documentId, targetLocales } = body
 
     if (!collectionSlug || !documentId) {
       return Response.json(
         { error: 'collectionSlug and documentId are required' },
+        { status: 400 },
+      )
+    }
+
+    if (!targetLocales || !Array.isArray(targetLocales) || targetLocales.length === 0) {
+      return Response.json(
+        { error: 'targetLocales array is required and must contain at least one locale' },
         { status: 400 },
       )
     }
@@ -61,7 +68,7 @@ export async function POST(request: Request) {
     } as PayloadRequest
 
     // Translate the document
-    await translateDocument(req, collectionConfig, documentId)
+    await translateDocument(req, collectionConfig, documentId, 'en', targetLocales)
 
     return Response.json({ success: true })
   } catch (error) {
