@@ -12,6 +12,9 @@ export const TranslateButton: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [selectedLocales, setSelectedLocales] = useState<string[]>([])
+  const [translatingLocale, setTranslatingLocale] = useState<string | null>(null)
+  const [completedLocales, setCompletedLocales] = useState<Set<string>>(new Set())
+  const [failedLocales, setFailedLocales] = useState<Set<string>>(new Set())
 
   // Get available target locales (excluding the source locale 'en')
   // Memoize to prevent unnecessary recalculations
@@ -78,36 +81,67 @@ export const TranslateButton: React.FC = () => {
     setIsTranslating(true)
     setError(null)
     setSuccess(false)
+    setCompletedLocales(new Set())
+    setFailedLocales(new Set())
+    setTranslatingLocale(null)
 
-    try {
-      const response = await fetch('/api/translate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          collectionSlug,
-          documentId: id,
-          targetLocales: selectedLocales,
-        }),
-      })
+    const completed: Set<string> = new Set()
+    const failed: Set<string> = new Set()
 
-      const data = await response.json()
+    // Translate each locale in a separate API request
+    for (const locale of selectedLocales) {
+      try {
+        setTranslatingLocale(locale)
+        
+        const response = await fetch('/api/translate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            collectionSlug,
+            documentId: id,
+            targetLocales: [locale], // Send single locale per request
+          }),
+        })
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Translation failed')
+        const data = await response.json()
+
+        if (!response.ok) {
+          throw new Error(data.error || `Translation failed for ${locale}`)
+        }
+
+        // Mark this locale as completed
+        completed.add(locale)
+        failed.delete(locale)
+        setCompletedLocales(new Set(completed))
+        setFailedLocales(new Set(failed))
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : `An error occurred during translation for ${locale}`
+        console.error(`Translation error for ${locale}:`, err)
+        
+        // Mark this locale as failed
+        failed.add(locale)
+        completed.delete(locale)
+        setFailedLocales(new Set(failed))
+        setCompletedLocales(new Set(completed))
+        
+        // Set error but continue with other locales
+        setError(errorMessage)
+      } finally {
+        setTranslatingLocale(null)
       }
+    }
 
+    setIsTranslating(false)
+    
+    // If at least one locale succeeded, show success
+    if (completed.size > 0) {
       setSuccess(true)
-      
       // Reload the page to show the new translations
       setTimeout(() => {
         window.location.reload()
       }, 1500)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred during translation')
-    } finally {
-      setIsTranslating(false)
     }
   }
 
@@ -147,6 +181,10 @@ export const TranslateButton: React.FC = () => {
         >
           {availableLocales.map((localeCode) => {
             const isChecked = selectedLocales.includes(localeCode)
+            const isTranslating = translatingLocale === localeCode
+            const isCompleted = completedLocales.has(localeCode)
+            const isFailed = failedLocales.has(localeCode)
+            
             return (
               <div
                 key={localeCode}
@@ -154,21 +192,28 @@ export const TranslateButton: React.FC = () => {
                   display: 'flex',
                   alignItems: 'center',
                   padding: '0.5rem',
+                  backgroundColor: isTranslating ? '#e3f2fd' : isCompleted ? '#e8f5e9' : isFailed ? '#ffebee' : 'transparent',
                 }}
               >
                 <Checkbox
                   checked={isChecked}
                   onCheckedChange={(checked) => handleLocaleCheckboxChange(localeCode, checked === true)}
                   style={{ marginRight: '0.5rem' }}
+                  disabled={isTranslating}
                 />
                 <span
                   style={{
                     fontSize: '0.875rem',
                     userSelect: 'none',
                     flex: 1,
+                    fontWeight: isTranslating ? '600' : 'normal',
+                    color: isFailed ? '#d32f2f' : isCompleted ? '#2e7d32' : 'inherit',
                   }}
                 >
                   {localeNames[localeCode] || localeCode}
+                  {isTranslating && ' (translating...)'}
+                  {isCompleted && ' ✓'}
+                  {isFailed && ' ✗'}
                 </span>
               </div>
             )
@@ -182,7 +227,9 @@ export const TranslateButton: React.FC = () => {
         buttonStyle="primary"
       >
         {isTranslating
-          ? `Translating to ${selectedLocales.length} locale${selectedLocales.length !== 1 ? 's' : ''}...`
+          ? translatingLocale
+            ? `Translating ${localeNames[translatingLocale] || translatingLocale}... (${completedLocales.size + 1}/${selectedLocales.length})`
+            : `Translating... (${completedLocales.size}/${selectedLocales.length})`
           : `Translate to ${selectedLocales.length} Locale${selectedLocales.length !== 1 ? 's' : ''}`}
       </Button>
       {error && (
