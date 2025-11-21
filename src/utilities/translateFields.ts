@@ -300,7 +300,15 @@ async function translateText(
 
   // Translate each chunk sequentially
   for (const chunk of chunks) {
-    const chunkText = chunk.join('\n\n')
+    // Filter out empty paragraphs from chunk
+    const nonEmptyChunk = chunk.filter((p) => p && p.trim())
+    
+    // Skip empty chunks
+    if (nonEmptyChunk.length === 0) {
+      continue
+    }
+    
+    const chunkText = nonEmptyChunk.join('\n\n')
     const translatedChunk = await translateTextChunk(chunkText, sourceLocale, targetLocale)
     translatedChunks.push(translatedChunk)
     
